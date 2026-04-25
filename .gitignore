@@ -1,0 +1,10 @@
+node_modules/
+apps/*/node_modules/
+apps/web/dist/
+coverage/
+playwright-report/
+apps/web/test-results/
+.env
+.env.*
+*.log
+apps/api/.scenarios.json

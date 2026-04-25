@@ -1,0 +1,45 @@
+steps:
+  - name: gcr.io/cloud-builders/gcloud
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        echo "Cloud Build pipeline prepared for Cloud Run."
+        echo "This pipeline assumes apps/api/Dockerfile exists (intentionally deferred)."
+        echo "Once Dockerfile is added, uncomment docker build/deploy steps below."
+
+  # - name: gcr.io/cloud-builders/docker
+  #   args:
+  #     - build
+  #     - -f
+  #     - apps/api/Dockerfile
+  #     - -t
+  #     - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${SHORT_SHA}
+  #     - .
+
+  # - name: gcr.io/cloud-builders/docker
+  #   args:
+  #     - push
+  #     - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${SHORT_SHA}
+
+  # - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+  #   entrypoint: gcloud
+  #   args:
+  #     - run
+  #     - deploy
+  #     - ${_SERVICE}
+  #     - --image
+  #     - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${SHORT_SHA}
+  #     - --region
+  #     - ${_REGION}
+  #     - --platform
+  #     - managed
+  #     - --allow-unauthenticated
+
+substitutions:
+  _SERVICE: bal-route-intelligence
+  _REGION: us-central1
+  _REPOSITORY: bal-artifacts
+
+options:
+  logging: CLOUD_LOGGING_ONLY

@@ -1,0 +1,19 @@
+{
+  "name": "supply-chain-route-intelligence",
+  "private": true,
+  "packageManager": "yarn@1.22.22",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"yarn workspace @bal/api dev\" \"yarn workspace @bal/web dev\"",
+    "build": "yarn workspace @bal/web build && yarn workspace @bal/api build",
+    "test": "yarn workspace @bal/api test && yarn workspace @bal/web test",
+    "test:api": "yarn workspace @bal/api test",
+    "test:web": "yarn workspace @bal/web test",
+    "test:e2e": "yarn workspace @bal/web test:e2e"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
