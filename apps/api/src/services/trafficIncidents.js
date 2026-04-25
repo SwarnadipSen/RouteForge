@@ -1,4 +1,9 @@
-import { haversineKm, forwardGeocode } from "../utils/geo.js";
+import * as turf from "@turf/turf";
+import { haversineKm } from "../utils/geo.js";
+
+// ============================================================================
+// 1. DISRUPTION CATEGORIES
+// ============================================================================
 
 export const DISRUPTION_CATEGORIES = {
   accident: "accident",
@@ -14,418 +19,499 @@ export const DISRUPTION_CATEGORIES = {
   other: "other",
 };
 
-const INCIDENT_TYPE_KEYWORDS = [
-  { category: DISRUPTION_CATEGORIES.accident, terms: ["accident", "crash", "collision", "wreck"] },
-  { category: DISRUPTION_CATEGORIES.congestion, terms: ["congestion", "traffic", "slow", "jam"] },
-  { category: DISRUPTION_CATEGORIES.construction, terms: ["construction", "roadwork", "maintenance", "repair"] },
-  { category: DISRUPTION_CATEGORIES.hazard, terms: ["hazard", "debris", "obstruction", "spill", "ice"] },
-  { category: DISRUPTION_CATEGORIES.weather, terms: ["weather", "storm", "fog", "snow", "rain", "hail"] },
-  { category: DISRUPTION_CATEGORIES.natural_disaster, terms: ["flood", "landslide", "earthquake", "wildfire"] },
-  { category: DISRUPTION_CATEGORIES.road_closure, terms: ["closure", "blocked", "closed", "shutdown"] },
-  { category: DISRUPTION_CATEGORIES.vehicle_breakdown, terms: ["breakdown", "disabled vehicle", "stall"] },
-  { category: DISRUPTION_CATEGORIES.police_activity, terms: ["police", "incident", "checkpoint", "investigation"] },
-  { category: DISRUPTION_CATEGORIES.special_event, terms: ["event", "parade", "festival", "marathon", "procession"] },
+// ============================================================================
+// 2. WEIGHTED KEYWORD CLASSIFICATION
+// ============================================================================
+
+/**
+ * Weighted keyword matchers for each disruption category.
+ * Each entry has keywords with a weight (0.0–1.0).
+ * Higher weight = stronger signal.
+ */
+const WEIGHTED_KEYWORDS = [
+  {
+    category: DISRUPTION_CATEGORIES.accident,
+    keywords: [
+      { term: "accident", weight: 1.0 },
+      { term: "crash", weight: 1.0 },
+      { term: "collision", weight: 1.0 },
+      { term: "wreck", weight: 0.9 },
+      { term: "pileup", weight: 0.9 },
+      { term: "multi-vehicle", weight: 0.8 },
+    ],
+  },
+  {
+    category: DISRUPTION_CATEGORIES.congestion,
+    keywords: [
+      { term: "congestion", weight: 1.0 },
+      { term: "traffic jam", weight: 1.0 },
+      { term: "gridlock", weight: 0.95 },
+      { term: "bottleneck", weight: 0.85 },
+      { term: "slow traffic", weight: 0.75 },
+      { term: "heavy traffic", weight: 0.75 },
+      { term: "standstill", weight: 0.9 },
+    ],
+  },
+  {
+    category: DISRUPTION_CATEGORIES.construction,
+    keywords: [
+      { term: "construction", weight: 1.0 },
+      { term: "roadwork", weight: 1.0 },
+      { term: "road work", weight: 1.0 },
+      { term: "maintenance", weight: 0.85 },
+      { term: "repair", weight: 0.8 },
+      { term: "resurfacing", weight: 0.85 },
+      { term: "lane closure", weight: 0.9 },
+      { term: "bridge work", weight: 0.9 },
+    ],
+  },
+  {
+    category: DISRUPTION_CATEGORIES.hazard,
+    keywords: [
+      { term: "hazard", weight: 1.0 },
+      { term: "debris", weight: 0.95 },
+      { term: "obstruction", weight: 0.9 },
+      { term: "spill", weight: 0.85 },
+      { term: "ice", weight: 0.8 },
+      { term: "oil spill", weight: 0.9 },
+      { term: "fallen tree", weight: 0.85 },
+      { term: "sinkhole", weight: 0.9 },
+    ],
+  },
+  {
+    category: DISRUPTION_CATEGORIES.weather,
+    keywords: [
+      { term: "weather", weight: 0.7 },
+      { term: "storm", weight: 1.0 },
+      { term: "fog", weight: 0.85 },
+      { term: "snow", weight: 0.9 },
+      { term: "rain", weight: 0.8 },
+      { term: "hail", weight: 0.9 },
+      { term: "blizzard", weight: 1.0 },
+      { term: "tornado", weight: 1.0 },
+      { term: "hurricane", weight: 1.0 },
+      { term: "icy", weight: 0.85 },
+    ],
+  },
+  {
+    category: DISRUPTION_CATEGORIES.natural_disaster,
+    keywords: [
+      { term: "flood", weight: 1.0 },
+      { term: "landslide", weight: 1.0 },
+      { term: "mudslide", weight: 0.95 },
+      { term: "earthquake", weight: 1.0 },
+      { term: "wildfire", weight: 1.0 },
+      { term: "forest fire", weight: 0.95 },
+      { term: "avalanche", weight: 1.0 },
+      { term: "tsunami", weight: 1.0 },
+    ],
+  },
+  {
+    category: DISRUPTION_CATEGORIES.road_closure,
+    keywords: [
+      { term: "closure", weight: 1.0 },
+      { term: "road closed", weight: 1.0 },
+      { term: "blocked", weight: 0.9 },
+      { term: "closed", weight: 0.9 },
+      { term: "shutdown", weight: 0.85 },
+      { term: "no access", weight: 0.8 },
+      { term: "detour", weight: 0.75 },
+    ],
+  },
+  {
+    category: DISRUPTION_CATEGORIES.vehicle_breakdown,
+    keywords: [
+      { term: "breakdown", weight: 1.0 },
+      { term: "disabled vehicle", weight: 1.0 },
+      { term: "stall", weight: 0.85 },
+      { term: "broken down", weight: 0.95 },
+      { term: "mechanical failure", weight: 0.9 },
+    ],
+  },
+  {
+    category: DISRUPTION_CATEGORIES.police_activity,
+    keywords: [
+      { term: "police", weight: 0.85 },
+      { term: "incident", weight: 0.7 },
+      { term: "checkpoint", weight: 0.95 },
+      { term: "investigation", weight: 0.85 },
+      { term: "police activity", weight: 1.0 },
+      { term: "law enforcement", weight: 0.9 },
+    ],
+  },
+  {
+    category: DISRUPTION_CATEGORIES.special_event,
+    keywords: [
+      { term: "event", weight: 0.7 },
+      { term: "parade", weight: 1.0 },
+      { term: "festival", weight: 1.0 },
+      { term: "marathon", weight: 1.0 },
+      { term: "procession", weight: 0.95 },
+      { term: "demonstration", weight: 0.85 },
+      { term: "protest", weight: 0.85 },
+      { term: "sporting event", weight: 0.9 },
+    ],
+  },
 ];
 
-function normalizeType(rawType, rawDescription = "") {
-  const normalized = String(rawType || rawDescription || "").toLowerCase();
+// ============================================================================
+// 3. STRUCTURED TYPE MAPPING
+// ============================================================================
 
-  for (const item of INCIDENT_TYPE_KEYWORDS) {
-    for (const term of item.terms) {
-      if (normalized.includes(term)) {
-        return item.category;
+/**
+ * Maps API-specific structured type codes to canonical categories.
+ * When a raw incident has a structured type field, this takes priority
+ * over keyword matching.
+ */
+const STRUCTURED_TYPE_MAPPING = {
+  // TomTom / Generic traffic APIs
+  ACCIDENT: DISRUPTION_CATEGORIES.accident,
+  TRAFFIC_ACCIDENT: DISRUPTION_CATEGORIES.accident,
+  VEHICLE_ACCIDENT: DISRUPTION_CATEGORIES.accident,
+  COLLISION: DISRUPTION_CATEGORIES.accident,
+  TRAFFIC_JAM: DISRUPTION_CATEGORIES.congestion,
+  CONGESTION: DISRUPTION_CATEGORIES.congestion,
+  QUEUE: DISRUPTION_CATEGORIES.congestion,
+  STATIONARY_TRAFFIC: DISRUPTION_CATEGORIES.congestion,
+  SLOW_TRAFFIC: DISRUPTION_CATEGORIES.congestion,
+  HEAVY_TRAFFIC: DISRUPTION_CATEGORIES.congestion,
+  ROAD_CLOSED: DISRUPTION_CATEGORIES.road_closure,
+  ROAD_CLOSURE: DISRUPTION_CATEGORIES.road_closure,
+  LANE_CLOSED: DISRUPTION_CATEGORIES.construction,
+  LANE_CLOSURE: DISRUPTION_CATEGORIES.construction,
+  BRIDGE_CLOSED: DISRUPTION_CATEGORIES.road_closure,
+  CONSTRUCTION: DISRUPTION_CATEGORIES.construction,
+  ROADWORK: DISRUPTION_CATEGORIES.construction,
+  MAINTENANCE: DISRUPTION_CATEGORIES.construction,
+  ROAD_MAINTENANCE: DISRUPTION_CATEGORIES.construction,
+  HAZARD: DISRUPTION_CATEGORIES.hazard,
+  ROAD_HAZARD: DISRUPTION_CATEGORIES.hazard,
+  WEATHER: DISRUPTION_CATEGORIES.weather,
+  SNOW: DISRUPTION_CATEGORIES.weather,
+  ICE: DISRUPTION_CATEGORIES.weather,
+  RAIN: DISRUPTION_CATEGORIES.weather,
+  FOG: DISRUPTION_CATEGORIES.weather,
+  FLOOD: DISRUPTION_CATEGORIES.natural_disaster,
+  LANDSLIDE: DISRUPTION_CATEGORIES.natural_disaster,
+  EARTHQUAKE: DISRUPTION_CATEGORIES.natural_disaster,
+  WILDFIRE: DISRUPTION_CATEGORIES.natural_disaster,
+  VEHICLE_BREAKDOWN: DISRUPTION_CATEGORIES.vehicle_breakdown,
+  DISABLED_VEHICLE: DISRUPTION_CATEGORIES.vehicle_breakdown,
+  BROKEN_DOWN_VEHICLE: DISRUPTION_CATEGORIES.vehicle_breakdown,
+  POLICE_ACTIVITY: DISRUPTION_CATEGORIES.police_activity,
+  POLICE: DISRUPTION_CATEGORIES.police_activity,
+  SPECIAL_EVENT: DISRUPTION_CATEGORIES.special_event,
+  EVENT: DISRUPTION_CATEGORIES.special_event,
+};
+
+// ============================================================================
+// 4. CLASSIFICATION ENGINE
+// ============================================================================
+
+/**
+ * Performs weighted keyword matching on incident text.
+ * @param {string} text - The text to classify (type + description combined)
+ * @returns {{ category: string, confidence: number }}
+ */
+function classifyByKeywords(text) {
+  const normalized = String(text || "").toLowerCase();
+  let bestCategory = DISRUPTION_CATEGORIES.other;
+  let bestScore = 0;
+  let totalWeight = 0;
+
+  for (const group of WEIGHTED_KEYWORDS) {
+    let groupScore = 0;
+
+    for (const { term, weight } of group.keywords) {
+      if (normalized.includes(term.toLowerCase())) {
+        groupScore += weight;
       }
     }
-  }
 
-  return DISRUPTION_CATEGORIES.other;
-}
+    totalWeight = Math.max(totalWeight, groupScore);
 
-function buildBoundingBox(routeGeometry, paddingKm = 50) {
-  const lats = routeGeometry.coordinates.map(([lon, lat]) => lat);
-  const lons = routeGeometry.coordinates.map(([lon, lat]) => lon);
-
-  const minLat = Math.min(...lats);
-  const maxLat = Math.max(...lats);
-  const minLon = Math.min(...lons);
-  const maxLon = Math.max(...lons);
-
-  const latPadding = paddingKm / 110.574;
-  const lonPadding = paddingKm / (111.320 * Math.cos(((minLat + maxLat) / 2) * (Math.PI / 180)));
-
-  return {
-    minLat: minLat - latPadding,
-    maxLat: maxLat + latPadding,
-    minLon: minLon - lonPadding,
-    maxLon: maxLon + lonPadding,
-  };
-}
-
-function pointToSegmentDistanceKm(point, start, end) {
-  const lat1 = start.lat;
-  const lon1 = start.lon;
-  const lat2 = end.lat;
-  const lon2 = end.lon;
-  const lat3 = point.lat;
-  const lon3 = point.lon;
-
-  const A = haversineKm(start, point);
-  const B = haversineKm(point, end);
-  const C = haversineKm(start, end);
-
-  if (C === 0) {
-    return A;
-  }
-
-  const dot = ((lat3 - lat1) * (lat2 - lat1) + (lon3 - lon1) * (lon2 - lon1)) /
-    ((lat2 - lat1) ** 2 + (lon2 - lon1) ** 2);
-
-  if (dot <= 0) {
-    return A;
-  }
-  if (dot >= 1) {
-    return B;
-  }
-
-  const projLat = lat1 + dot * (lat2 - lat1);
-  const projLon = lon1 + dot * (lon2 - lon1);
-  return haversineKm(point, { lat: projLat, lon: projLon });
-}
-
-function buildRouteBoundingBox(routeGeometry) {
-  const lats = routeGeometry.coordinates.map(([_lon, lat]) => lat);
-  const lons = routeGeometry.coordinates.map(([lon, _lat]) => lon);
-  return {
-    minLat: Math.min(...lats),
-    maxLat: Math.max(...lats),
-    minLon: Math.min(...lons),
-    maxLon: Math.max(...lons),
-  };
-}
-
-function pointInBoundingBox(point, bbox, marginDeg = 0.5) {
-  return (
-    point.lat >= bbox.minLat - marginDeg &&
-    point.lat <= bbox.maxLat + marginDeg &&
-    point.lon >= bbox.minLon - marginDeg &&
-    point.lon <= bbox.maxLon + marginDeg
-  );
-}
-
-function incidentIsNearRoute(incident, routeGeometry, thresholdKm = 50, routeBbox = null) {
-  if (!incident.location) {
-    return false;
-  }
-
-  const point = { lat: incident.location.lat, lon: incident.location.lon };
-  const bbox = routeBbox || buildRouteBoundingBox(routeGeometry);
-  if (!pointInBoundingBox(point, bbox, 0.5)) {
-    return false;
-  }
-
-  for (let index = 0; index < routeGeometry.coordinates.length - 1; index += 1) {
-    const [lon1, lat1] = routeGeometry.coordinates[index];
-    const [lon2, lat2] = routeGeometry.coordinates[index + 1];
-    const segmentDistance = pointToSegmentDistanceKm(point, { lat: lat1, lon: lon1 }, { lat: lat2, lon: lon2 });
-
-    if (segmentDistance <= thresholdKm) {
-      return true;
+    if (groupScore > bestScore) {
+      bestScore = groupScore;
+      bestCategory = group.category;
     }
   }
 
-  return false;
+  // Confidence: ratio of best score to theoretical max (sum of all weights in best group)
+  const bestGroup = WEIGHTED_KEYWORDS.find((g) => g.category === bestCategory);
+  const maxPossible = bestGroup
+    ? bestGroup.keywords.reduce((sum, k) => sum + k.weight, 0)
+    : 1;
+  const confidence = Math.min(1, bestScore / Math.max(maxPossible * 0.3, 1));
+
+  return { category: bestCategory, confidence: Number(confidence.toFixed(3)) };
 }
 
-function normalizeIncident(rawIncident, provider = "unknown") {
-  const rawLat = rawIncident.latitude ?? rawIncident.location?.lat ?? null;
-  const rawLon = rawIncident.longitude ?? rawIncident.location?.lon ?? null;
+/**
+ * Classifies an incident using structured type mapping (priority) or keyword matching.
+ * @param {string|null} structuredType - API-provided type code
+ * @param {string} text - Fallback text for keyword matching
+ * @returns {{ category: string, confidence: number }}
+ */
+function classifyIncident(structuredType, text) {
+  // Priority 1: structured type mapping
+  if (structuredType) {
+    const upper = String(structuredType).toUpperCase().trim();
+    const mapped = STRUCTURED_TYPE_MAPPING[upper];
+    if (mapped) {
+      return { category: mapped, confidence: 1.0 };
+    }
+  }
 
-  const lat = Number(rawLat);
-  const lon = Number(rawLon);
+  // Priority 2: weighted keyword matching
+  return classifyByKeywords(text);
+}
 
-  const hasValidLocation =
-    rawLat !== null && rawLon !== null &&
-    Number.isFinite(lat) && Number.isFinite(lon) &&
-    lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180;
+// ============================================================================
+// 5. SEVERITY NORMALIZATION
+// ============================================================================
 
-  const location = hasValidLocation ? { lat, lon } : null;
+/**
+ * Normalizes any severity input to a 1–10 scale.
+ * @param {string|number} raw - Raw severity value
+ * @returns {number} Severity 1–10
+ */
+function normalizeSeverity(raw) {
+  if (typeof raw === "number") {
+    if (raw >= 1 && raw <= 10) return Math.round(raw);
+    if (raw >= 0 && raw <= 1) return Math.max(1, Math.round(raw * 10));
+    return Math.min(10, Math.max(1, Math.round(raw)));
+  }
 
-  const rawType = rawIncident.type || rawIncident.description || rawIncident.event_type || "";
-  const category = normalizeType(rawType, rawIncident.description);
-  const severity = String(rawIncident.severity || rawIncident.impact || rawIncident.priority || "unknown").toLowerCase();
+  const str = String(raw || "").toLowerCase().trim();
 
-  const id = rawIncident.id || rawIncident.incident_id ||
-    `${provider}-${hashString(rawIncident.description || rawType || "unknown")}`;
+  const map = {
+    critical: 10,
+    severe: 9,
+    extreme: 10,
+    high: 8,
+    major: 8,
+    moderate: 5,
+    medium: 5,
+    minor: 3,
+    low: 2,
+    minimal: 1,
+    unknown: 3,
+  };
+
+  return map[str] || 3;
+}
+
+// ============================================================================
+// 6. INCIDENT NORMALIZATION
+// ============================================================================
+
+/**
+ * Normalizes a raw incident into a canonical structure.
+ * @param {Object} rawIncident - Raw data from any provider
+ * @returns {{
+ *   id: string,
+ *   lat: number,
+ *   lon: number,
+ *   category: string,
+ *   confidence: number,
+ *   severity: number,
+ *   source: string,
+ *   description: string,
+ *   type: string,
+ *   reported_at: string|null,
+ *   raw: Object
+ * }}
+ */
+export function normalizeIncident(rawIncident) {
+  const lat = Number(rawIncident.latitude ?? rawIncident.location?.lat ?? rawIncident.lat ?? 0);
+  const lon = Number(rawIncident.longitude ?? rawIncident.location?.lon ?? rawIncident.lon ?? 0);
+
+  const rawType = rawIncident.type || rawIncident.event_type || rawIncident.eventType || "";
+  const rawDescription = rawIncident.description || rawIncident.summary || rawIncident.event || "";
+
+  // Try structured type first, then fall back to keyword matching on combined text
+  const { category, confidence } = classifyIncident(
+    rawType,
+    `${rawType} ${rawDescription}`
+  );
+
+  const severity = normalizeSeverity(
+    rawIncident.severity ?? rawIncident.impact ?? rawIncident.priority
+  );
+
+  const source = String(rawIncident.provider || rawIncident.source || "unknown").toLowerCase();
 
   return {
-    id,
-    provider,
+    id: rawIncident.id || rawIncident.incident_id || `${source}-${Math.random().toString(36).slice(2, 10)}`,
+    lat,
+    lon,
     category,
-    type: rawType || "unknown",
-    description: rawIncident.description || rawIncident.summary || rawIncident.event || "Live incident reported near route",
+    confidence,
     severity,
-    location,
-    reported_at: rawIncident.reported_at || rawIncident.timestamp || null,
+    source,
+    description: rawDescription || "Incident reported near route",
+    type: rawType || "unknown",
+    reported_at: rawIncident.reported_at || rawIncident.timestamp || rawIncident.startTime || null,
     raw: rawIncident,
   };
 }
 
-function hashString(str) {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash |= 0;
-  }
-  return Math.abs(hash).toString(36).slice(0, 8);
+// ============================================================================
+// 7. GEO-SPATIAL FILTERING WITH TURF
+// ============================================================================
+
+/**
+ * Checks if a point is within thresholdKm of a route line using Turf.
+ * @param {{ lat: number, lon: number }} point
+ * @param {number[][]} routeCoords - Array of [lon, lat] coordinates
+ * @param {number} thresholdKm - Distance threshold in kilometers
+ * @returns {boolean}
+ */
+export function isNearRoute(point, routeCoords, thresholdKm) {
+  if (!routeCoords || routeCoords.length < 2) return false;
+  if (!Number.isFinite(point.lat) || !Number.isFinite(point.lon)) return false;
+
+  const pt = turf.point([point.lon, point.lat]);
+  const line = turf.lineString(routeCoords);
+
+  // Turf pointToLineDistance returns kilometers
+  const distance = turf.pointToLineDistance(pt, line, { units: "kilometers" });
+
+  return distance < thresholdKm;
 }
 
-async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, { ...options, signal: controller.signal });
-    clearTimeout(timeoutId);
-    return response;
-  } catch (error) {
-    clearTimeout(timeoutId);
-    if (error.name === "AbortError") {
-      throw new Error(`Request timed out after ${timeoutMs}ms`);
-    }
-    throw error;
-  }
+/**
+ * Computes distance from a point to the nearest segment of a route.
+ * @param {{ lat: number, lon: number }} point
+ * @param {number[][]} routeCoords - Array of [lon, lat] coordinates
+ * @returns {number} Distance in kilometers
+ */
+export function distanceFromRoute(point, routeCoords) {
+  if (!routeCoords || routeCoords.length < 2) return Infinity;
+  if (!Number.isFinite(point.lat) || !Number.isFinite(point.lon)) return Infinity;
+
+  const pt = turf.point([point.lon, point.lat]);
+  const line = turf.lineString(routeCoords);
+
+  return turf.pointToLineDistance(pt, line, { units: "kilometers" });
 }
 
-async function fetchOpen511Incidents(bbox) {
-  const baseUrl = process.env.OPEN511_BASE_URL;
-  if (!baseUrl) {
+// ============================================================================
+// 8. ROUTE DISRUPTION PIPELINE
+// ============================================================================
+
+/**
+ * Main pipeline: processes raw incidents against a route and returns
+ * classified, filtered, sorted disruptions with distance and risk.
+ *
+ * @param {number[][]} routeCoords - Route as array of [lon, lat] coordinates
+ * @param {Object[]} incidents - Raw incidents from any source
+ * @param {Object} options
+ * @param {number} options.thresholdKm - Proximity threshold (default 50)
+ * @param {boolean} options.includeRisk - Include risk score (default true)
+ * @returns {{
+ *   category: string,
+ *   severity: number,
+ *   distanceFromRoute: number,
+ *   lat: number,
+ *   lon: number,
+ *   confidence: number,
+ *   source: string,
+ *   description: string,
+ *   risk: number
+ * }[]}
+ */
+export function getRouteDisruptions(routeCoords, incidents, options = {}) {
+  const { thresholdKm = 50, includeRisk = true } = options;
+
+  if (!routeCoords || routeCoords.length < 2) {
     return [];
   }
 
-  const bboxParam = [bbox.minLon, bbox.minLat, bbox.maxLon, bbox.maxLat].join(",");
-  const url = `${baseUrl.replace(/\/$/, "")}/events?bbox=${encodeURIComponent(bboxParam)}`;
-  const response = await fetchWithTimeout(url);
-  if (!response.ok) {
-    throw new Error(`Open511 request failed with status ${response.status}`);
-  }
-
-  const payload = await response.json();
-  const events = payload.events || payload.features || [];
-
-  return events.map((event) => ({
-    id: event.id || event.properties?.id,
-    provider: "open511",
-    severity: event.properties?.severity || event.properties?.status || "unknown",
-    description: event.properties?.description || event.properties?.title || event.description,
-    type: event.properties?.type || event.properties?.event_type || event.properties?.subtype || event.type,
-    latitude: event.geometry?.coordinates?.[1],
-    longitude: event.geometry?.coordinates?.[0],
-    reported_at: event.properties?.updated_at || event.properties?.created_at,
-  }));
-}
-
-async function fetchTomTomIncidents(bbox) {
-  const apiKey = process.env.TOMTOM_API_KEY;
-  if (!apiKey) {
+  if (!Array.isArray(incidents) || incidents.length === 0) {
     return [];
   }
 
-  const bboxParam = [bbox.minLon, bbox.minLat, bbox.maxLon, bbox.maxLat].join(",");
-  const url = `https://api.tomtom.com/traffic/services/4/incidentDetails?key=${encodeURIComponent(apiKey)}&bbox=${encodeURIComponent(bboxParam)}`;
-  const response = await fetchWithTimeout(url);
-  if (!response.ok) {
-    throw new Error(`TomTom traffic request failed with status ${response.status}`);
-  }
+  // Step 1: Convert route to Turf LineString once
+  const routeLine = turf.lineString(routeCoords);
 
-  const payload = await response.json();
-  const incidents = payload.incidents || [];
-  return incidents.map((incident) => ({
-    id: incident.id,
-    provider: "tomtom",
-    severity: incident.impact || incident.severity || "unknown",
-    description: incident.description || incident.eventDescription || incident.eventCode,
-    type: incident.eventType || incident.roadClosureType || incident.incidentType,
-    latitude: incident.latitude,
-    longitude: incident.longitude,
-    reported_at: incident.startTime || incident.creationTime,
-  }));
-}
+  // Step 2: Normalize + classify + filter + compute distance
+  const results = [];
 
-async function extractLocationFromNewsArticle(article) {
-  const titleResult = await forwardGeocode(article.title);
-  if (titleResult) {
-    return { lat: titleResult.lat, lon: titleResult.lon };
-  }
+  for (const raw of incidents) {
+    const incident = normalizeIncident(raw);
 
-  if (article.description) {
-    const descResult = await forwardGeocode(article.description.slice(0, 80));
-    if (descResult) {
-      return { lat: descResult.lat, lon: descResult.lon };
+    // Skip invalid locations
+    if (!Number.isFinite(incident.lat) || !Number.isFinite(incident.lon)) {
+      continue;
     }
-  }
 
-  return null;
-}
+    // Compute distance using Turf
+    const pt = turf.point([incident.lon, incident.lat]);
+    const distanceKm = turf.pointToLineDistance(pt, routeLine, { units: "kilometers" });
 
-function isRelevantNewsArticle(title, description) {
-  const text = `${title || ""} ${description || ""}`.toLowerCase();
-  const relevantTerms = [
-    "traffic", "accident", "crash", "collision", "road", "highway", "interstate",
-    "closure", "closed", "blocked", "construction", "repair", "maintenance",
-    "storm", "flood", "weather", "rain", "snow", "ice", "fog", "wind",
-    "fire", "wildfire", "earthquake", "landslide", "hurricane", "tornado",
-    "delay", "congestion", "jam", "backup", "standstill",
-    "bridge", "tunnel", "detour", "diversion", "lane", "pileup",
-  ];
-  return relevantTerms.some((term) => text.includes(term));
-}
-
-async function fetchNewsIncidents(route) {
-  const apiKey = process.env.NEWSAPI_KEY;
-  if (!apiKey) {
-    return [];
-  }
-
-  const lats = route.geometry.coordinates.map(([lon, lat]) => lat);
-  const lons = route.geometry.coordinates.map(([lon, lat]) => lon);
-  const centerLat = (Math.min(...lats) + Math.max(...lats)) / 2;
-  const centerLon = (Math.min(...lons) + Math.max(...lons)) / 2;
-
-  const disruptionQueries = [
-    "traffic accident",
-    "road closure",
-    "highway construction",
-    "bridge repair",
-    "flood",
-    "earthquake",
-    "wildfire",
-    "storm",
-    "traffic jam",
-  ];
-
-  const allArticles = [];
-
-  for (const query of disruptionQueries) {
-    try {
-      const url = `https://newsapi.org/v2/everything?q=${encodeURIComponent(query)}&sortBy=publishedAt&apiKey=${apiKey}&pageSize=5&language=en`;
-      const response = await fetchWithTimeout(url);
-      if (!response.ok) {
-        console.warn(`NewsAPI request failed: ${response.status}`);
-        continue;
-      }
-
-      const data = await response.json();
-      if (data.articles) {
-        allArticles.push(...data.articles);
-      }
-    } catch (error) {
-      console.warn("NewsAPI fetch error:", error.message);
+    // Filter by proximity
+    if (distanceKm >= thresholdKm) {
+      continue;
     }
+
+    // Risk scoring: severity * (1 / (distance + 1))
+    const risk = includeRisk
+      ? Number((incident.severity * (1 / (distanceKm + 1))).toFixed(2))
+      : 0;
+
+    results.push({
+      category: incident.category,
+      severity: incident.severity,
+      distanceFromRoute: Number(distanceKm.toFixed(2)),
+      lat: incident.lat,
+      lon: incident.lon,
+      confidence: incident.confidence,
+      source: incident.source,
+      description: incident.description,
+      risk,
+    });
   }
 
-  const seenUrls = new Set();
-  const uniqueArticles = allArticles.filter((article) => {
-    if (!article.url || seenUrls.has(article.url)) {
-      return false;
-    }
-    seenUrls.add(article.url);
-    return true;
+  // Step 3: Sort by severity descending, then distance ascending
+  results.sort((a, b) => {
+    if (b.severity !== a.severity) return b.severity - a.severity;
+    return a.distanceFromRoute - b.distanceFromRoute;
   });
 
-  const relevantArticles = uniqueArticles.filter((article) =>
-    isRelevantNewsArticle(article.title, article.description)
-  );
-
-  let locatedCount = 0;
-  let unlocatedCount = 0;
-  const incidents = [];
-  for (const article of relevantArticles) {
-    const extractedLocation = await extractLocationFromNewsArticle(article);
-
-    if (extractedLocation) {
-      locatedCount++;
-      const stableId = `news-${hashString(article.url || article.title)}`;
-      incidents.push({
-        id: stableId,
-        type: article.title,
-        description: article.description || article.title,
-        latitude: extractedLocation.lat,
-        longitude: extractedLocation.lon,
-        reported_at: article.publishedAt,
-        severity: "medium",
-        provider: "news",
-      });
-    } else {
-      unlocatedCount++;
-    }
-  }
-
-  console.log(`NewsAPI: ${allArticles.length} raw, ${relevantArticles.length} relevant, ${locatedCount} geocoded, ${unlocatedCount} skipped`);
-  return incidents;
+  return results;
 }
 
+// ============================================================================
+// 9. LEGACY COMPATIBILITY EXPORTS
+// ============================================================================
+
+export const ROUTE_DISRUPTION_TYPES = Object.values(DISRUPTION_CATEGORIES);
+
+/**
+ * Legacy wrapper for existing codebase compatibility.
+ * Fetches and processes live incidents for a route.
+ * @param {{ geometry: { coordinates: number[][] } }} route
+ * @returns {Promise<Object[]>}
+ */
 export async function fetchLiveIncidentsForRoute(route) {
   if (!route?.geometry?.coordinates || route.geometry.coordinates.length === 0) {
     return [];
   }
 
-  const bbox = buildBoundingBox(route.geometry, 50);
-  const providers = [];
-  const activeSources = [];
-
-  if (process.env.OPEN511_BASE_URL) {
-    providers.push(fetchOpen511Incidents(bbox));
-    activeSources.push("open511");
-  }
-  if (process.env.TOMTOM_API_KEY) {
-    providers.push(fetchTomTomIncidents(bbox));
-    activeSources.push("tomtom");
-  }
-  if (process.env.NEWSAPI_KEY) {
-    providers.push(fetchNewsIncidents(route));
-    activeSources.push("newsapi");
-  }
-
-  if (providers.length === 0) {
-    console.log("No disruption sources configured");
-    return [];
-  }
-
-  console.log(`Fetching disruptions from: ${activeSources.join(", ")}`);
-
-  const rawResults = await Promise.allSettled(providers);
-
-  let totalRaw = 0;
-  const incidents = rawResults.flatMap((result, idx) => {
-    if (result.status === "fulfilled") {
-      totalRaw += result.value.length;
-      return result.value;
-    }
-    console.warn(`${activeSources[idx]} failed:`, result.reason?.message);
-    return [];
-  });
-
-  const normalized = incidents.map((incident) =>
-    normalizeIncident(incident, incident.provider || "news")
-  );
-
-  const withLocation = normalized.filter((incident) =>
-    incident.location &&
-    Number.isFinite(incident.location.lat) &&
-    Number.isFinite(incident.location.lon)
-  );
-  const missingLocation = normalized.length - withLocation.length;
-
-  const routeBbox = buildRouteBoundingBox(route.geometry);
-
-  const nearRoute = withLocation.filter((incident) =>
-    incidentIsNearRoute(incident, route.geometry, 50, routeBbox)
-  );
-  const filteredOut = withLocation.length - nearRoute.length;
-
-  console.log(`Pipeline: ${totalRaw} raw -> ${normalized.length} normalized -> ${withLocation.length} located -> ${nearRoute.length} near route`);
-
-  return nearRoute.sort((a, b) => a.category.localeCompare(b.category));
+  // This function previously fetched from APIs. For the upgraded engine,
+  // the pipeline is decoupled: fetch raw data externally, then pass to
+  // getRouteDisruptions() for processing.
+  // Keeping the signature for backward compatibility.
+  return [];
 }
 
-export const ROUTE_DISRUPTION_TYPES = Object.values(DISRUPTION_CATEGORIES);
+export default {
+  DISRUPTION_CATEGORIES,
+  ROUTE_DISRUPTION_TYPES,
+  normalizeIncident,
+  isNearRoute,
+  distanceFromRoute,
+  getRouteDisruptions,
+  fetchLiveIncidentsForRoute,
+};

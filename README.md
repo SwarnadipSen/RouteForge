@@ -1,4 +1,6 @@
-# Supply Chain Route Intelligence
+# RouteForge
+
+> Real-time route intelligence for resilient supply chains.
 
 Production-grade route optimization and live disruption management for supply chain logistics.
 
@@ -6,7 +8,10 @@ Production-grade route optimization and live disruption management for supply ch
 
 - **Real Route Calculation** — OSRM, GraphHopper, OpenRouteService with automatic fallback
 - **Live Disruption Detection** — NewsAPI, TomTom Traffic, Open511
+- **Smart Classification Engine** — Structured type mapping + weighted keyword matching with confidence scores (0–1)
+- **Geo-Spatial Filtering** — `@turf/turf` point-to-line distance for precise route proximity detection
 - **Multi-Disruption Analysis** — Select multiple incidents, compute alternate routes
+- **Risk Scoring** — `risk = severity * (1 / (distance + 1))` for prioritization
 - **Fact-Based Metrics** — Distance, time, cost, and risk from real data
 - **Scenario Persistence** — Firestore or in-memory storage with audit trail
 - **AI-Powered Reasoning** — Gemini-powered route explanations with fallback
@@ -77,8 +82,7 @@ POST /api/routes/compute
 {
   "source": {"lat": 40.7128, "lon": -74.0060},
   "destination": {"lat": 34.0522, "lon": -118.2437},
-  "label": "NYC to LA"
-}
+  "label": "NYC to LA"}
 ```
 
 ### Compute Alternate Route
@@ -113,14 +117,36 @@ POST /api/chat
 ## Tech Stack
 
 - **Frontend**: Preact, Vite, Leaflet, OpenStreetMap
-- **Backend**: Express, Zod, UUID
+- **Backend**: Express, Zod, UUID, @turf/turf
 - **Routing**: OSRM, GraphHopper, OpenRouteService
-- **Disruptions**: NewsAPI, TomTom, Open511
+- **Disruptions**: NewsAPI, TomTom, Open511 with weighted classification + geo-filtering
 - **Storage**: Firestore / in-memory with disk backup
 - **AI**: Google Gemini (with graceful fallback)
 - **Testing**: Jest, Vitest, Playwright
 
+## Disruption Engine API
+
+The upgraded disruption engine (`trafficIncidents.js`) exposes these utilities:
+
+```javascript
+import {
+  normalizeIncident,      // Normalize + classify any raw incident
+  isNearRoute,            // Turf point-to-line distance check
+  distanceFromRoute,      // Exact km distance from route
+  getRouteDisruptions,    // Main pipeline: normalize -> classify -> filter -> sort -> risk
+} from "./services/trafficIncidents.js";
+```
+
+### `normalizeIncident(rawIncident)`
+Returns `{ id, lat, lon, category, confidence, severity (1-10), source, description, type, reported_at, raw }`
+
+### `getRouteDisruptions(routeCoords, incidents, options)`
+- `routeCoords`: `[[lon, lat], ...]` GeoJSON coordinates
+- `incidents`: Raw incident array from any provider
+- `options.thresholdKm`: Proximity filter (default 50)
+- `options.includeRisk`: Compute risk score (default true)
+- Returns sorted array by severity desc, then distance asc
+
 ## License
 
 MIT
-

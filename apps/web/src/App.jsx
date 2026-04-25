@@ -311,7 +311,7 @@ export default function App() {
   return (
     <div className="app-shell" data-testid="app-shell">
       <header className="topbar" data-testid="topbar">
-        <div className="brand">supply·chain / route intelligence</div>
+        <div className="brand">RouteForge</div>
         <div className="topbar-meta">OSRM · Driving · persisted · {scenarioId ? "scenario ready" : "no scenario"}</div>
       </header>
 
