@@ -89,14 +89,24 @@ test("compute to disruption to playback flow", async ({ page }) => {
 
   await page.goto("/");
 
+  await expect(page.locator('[data-testid="compute-optimized-route-button"]')).toBeDisabled();
+
+  await page.click('[data-testid="select-source-button"]');
+  await page.locator('.leaflet-container').click({ position: { x: 190, y: 170 } });
+  await page.click('[data-testid="select-destination-button"]');
+  await page.locator('.leaflet-container').click({ position: { x: 460, y: 250 } });
+
+  await page.fill('[data-testid="source-name-input"]', "Los Angeles Hub");
+  await page.fill('[data-testid="destination-name-input"]', "Chicago Hub");
+
   await page.click('[data-testid="compute-optimized-route-button"]');
   await expect(page.locator('[data-testid="metric-distance-card"]')).toContainText("110.0 km");
 
+  await page.click('[data-testid="disruption-multiselect-trigger"]');
   await page.click('[data-testid="select-live-disruption-incident-e2e-1"]');
+  await page.click('[data-testid="disruption-multiselect-trigger"]');
   await page.click('[data-testid="compute-alternate-route-button"]');
-  await expect(page.locator('[data-testid="metric-active-disruption-card"]')).toContainText(
-    "construction"
-  );
+  await expect(page.locator('[data-testid="metrics-panel"]')).toContainText("Disruption: construction");
 
   await page.fill('[data-testid="chat-input"]', "Can we still dispatch?");
   await page.click('[data-testid="chat-send-button"]');
