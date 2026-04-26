@@ -6,6 +6,7 @@
     "apps/*"
   ],
   "scripts": {
+    "setup": "./scripts/setup.sh",
     "dev": "concurrently \"yarn workspace @bal/api dev\" \"yarn workspace @bal/web dev\"",
     "build": "yarn workspace @bal/web build && yarn workspace @bal/api build",
     "test": "yarn workspace @bal/api test && yarn workspace @bal/web test",
