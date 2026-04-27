@@ -238,4 +238,19 @@ describe("App", () => {
 
     expect(screen.getByTestId("playback-step-label")).toHaveTextContent("Step 2");
   });
+
+  test("speed gauge meter renders and updates", async () => {
+    render(<App />);
+
+    await computeBaselineRoute();
+
+    expect(screen.getByTestId("dynamic-speed-gauge")).toBeInTheDocument();
+    expect(screen.getByTestId("metric-speed-card")).toHaveTextContent("80 km/h");
+
+    fireEvent.input(screen.getByTestId("speed-slider"), {
+      target: { value: "95" },
+    });
+
+    expect(screen.getByTestId("metric-speed-card")).toHaveTextContent("95 km/h");
+  });
 });
